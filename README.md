@@ -4,19 +4,19 @@ Create, schedule, and run a containerized data pipeline in Kubernetes.
 
 ## Overview
 
-In this project you will design, containerize, schedule, and operate a real data pipeline running inside a Kubernetes cluster on AWS. A working sample application is provided that tracks the International Space Station every 15 minutes, records its position and altitude in DynamoDB, and detects orbital burns when the altitude jumps significantly. You will study how that pipeline works, then build your own completely different data application that collects data on a schedule, persists it, and publishes an evolving plot to a public S3 website.
+In this project you will design, containerize, schedule, and operate a real data pipeline running inside a Kubernetes host on AWS. A working sample application is provided that tracks the International Space Station every 15 minutes, records its position and altitude in DynamoDB, and detects orbital burns when the altitude is raised significantly. You will study how that pipeline works, then build your own data application that collects data on a schedule, persists it, and publishes an evolving plot to a public S3 website.
 
-Your pipeline should run for at least 72 hours, collecting at least 72 data points.
+Your pipeline should run for at least 72 hours, collecting at least 72 data points. Choose a data source that is updated at least hourly.
 
 ### Learning Objectives
 
 By the end of this project you will be able to wrangle all the elements of a working container-driven data pipeline:
 
-1. **Provision cloud infrastructure** — launch and configure an EC2 instance, attach an Elastic IP and IAM role, and enable S3 static website hosting.
-2. **Deploy and operate Kubernetes** — install K3S, inspect cluster state with `kubectl`, and understand namespaces, pods, deployments, and jobs.
-3. **Containerize a Python application** — write a `Dockerfile`, build a single-stage image, and push it to a public container registry (GHCR).
+1. **Provision cloud infrastructure** — launch and configure an EC2 instance, attach an Elastic IP and proper IAM role/policy, and enable S3 static website hosting.
+2. **Deploy and operate Kubernetes** — install K3S, inspect cluster state with `kubectl`, and understand namespaces, pods, secrets, and jobs.
+3. **Containerize a Python application** — write a Python application, `Dockerfile`, build a container image, and push it to a public container registry (GHCR).
 4. **Schedule work with CronJobs** — define a Kubernetes `CronJob` manifest, control its schedule, and retrieve logs from completed job pods.
-5. **Manage secrets securely** — store API keys as Kubernetes Secrets and inject them as environment variables so sensitive values never appear in code or YAML files.
+5. **Manage secrets securely** (optional) — store API keys as Kubernetes Secrets and inject them as environment variables so sensitive values never appear in code or YAML files.
 6. **Persist data in DynamoDB** — create a DynamoDB table with a partition key and sort key, write items from a containerized job, and query for the most recent entry.
 7. **Consume a REST API programmatically** — parse JSON responses and handle incremental data collection across repeated runs.
 8. **Generate and publish data visualizations** — produce an evolving time-series plot with `seaborn`, overwrite it on each pipeline run, and serve it via S3 website hosting.
@@ -33,7 +33,7 @@ Create a new bucket for this project, enable it as a website, and make all files
 
 Create a `t3.large` Ubuntu 24.04 LTS instance with a 30GB boot volume. Attach an Elastic IP so your host address stays consistent. Attach a Security Group that allows inbound access on ports 22, 80, 8000, and 8080. Give the instance an IAM Role with:
 - **S3**: `PutObject`, `GetObject` on your website bucket
-- **DynamoDB**: `PutItem`, `GetItem`, `Query` on your tracking table
+- **DynamoDB**: `PutItem`, `GetItem`, `Query` on your tracking table named `iss-tracking`.
 
 ### 3. Install K3S
 
@@ -47,7 +47,7 @@ If you run this during instance bootstrapping, the `root` user will have cluster
 
 ### 4. Check the Status of Kubernetes
 
-Run these commands to verify your cluster is up:
+Run these commands to verify your cluster is up and healthy:
 
 ```bash
 kubectl cluster-info
@@ -56,7 +56,7 @@ kubectl get pods -A
 kubectl get nodes
 ```
 
-### 5. Test a Simple Scheduled Job
+### 5. Run a Simple Scheduled Job
 
 Apply the provided `simple-job.yaml` to confirm scheduling works end-to-end:
 
@@ -83,20 +83,22 @@ kubectl logs hello-cronjob-29582750-f2l9t
 # Hello from CronJob - Tue Mar 31 13:50:01 UTC 2026
 ```
 
-Once confirmed, clean up the test job:
+Once confirmed, remove the test job:
 
 ```bash
 kubectl delete -f simple-job.yaml
 ```
 
 > **Why are we running our own Kubernetes cluster?**
-> It is wasteful to spin up a dedicated EC2 instance for a single scheduled job — but your laptop isn't running 24/7, and I want you to experience Kubernetes from the admin side: provisioning it yourself, using `kubectl` directly, and seeing pods, jobs, secrets, and persistent storage all working together in a real cluster.
+> Yes it is wasteful to spin up a dedicated EC2 instance for a single scheduled job — but your laptop isn't running 24/7, and I want you to experience Kubernetes from the admin side: provisioning it yourself, using `kubectl` directly, and seeing pods, jobs, secrets, and persistent storage all working together in a "real" cluster. Getting you this visibility into other existing K8S clusters is difficult.
 
 ---
 
 ## Sample Data Application — ISS Reboost Tracker
 
-The sample application in the `iss-reboost/` directory tracks the **International Space Station** every 15 minutes. On each run it:
+The sample application in the `iss-reboost/` directory tracks the location, speed, and altitude of the **International Space Station** every 15 minutes. Due to normal atmospheric drag (even at 400 km up) there's enough residual atmosphere to gradually slow the station and lower its orbit. Left unchecked, the ISS would reenter within a few years. To mitigate this, the ISS performs "reboost burns" periodically to restore a higher altitude.
+
+On each run this application performs the following tasks:
 
 1. Calls the [wheretheiss.at](https://api.wheretheiss.at/v1/satellites/25544) API to get the ISS's current latitude, longitude, altitude, and velocity — no API key required.
 2. Queries DynamoDB for the most recent previous entry and computes the altitude delta.
@@ -157,7 +159,7 @@ A healthy log line looks like:
 ISS | alt=415.823 km | delta=-0.031 km | DESCENDING    | lat=21.4521 | lon=-143.2918 | visibility=daylight
 ```
 
-An orbital burn looks like:
+An orbital burn entry looks like:
 
 ```
 ISS | alt=417.614 km | delta=+2.103 km | ORBITAL_BURN  | lat=34.1124 | lon=12.0043 | visibility=eclipsed  *** ORBITAL BURN DETECTED ***
@@ -178,15 +180,15 @@ aws dynamodb query \
 
 ## Your Data Application
 
-Now build your own data pipeline. It should take a similar form to the ISS sample — a containerized Python script running on a Kubernetes CronJob schedule — but track completely different data. Requirements:
+Now build your own data pipeline. It should take a similar form to the ISS sample — a containerized Python script running on a Kubernetes CronJob schedule — but it should ingest and process completely different data. Requirements:
 
 - Collects data at least once per hour for at least 72 hours (≥ 72 data points)
-- Persists data across runs (DynamoDB, S3 Parquet, or similar)
+- Persists data across runs (DynamoDB, S3 Parquet/CSV, or similar)
 - Generates an evolving plot and publishes it to your S3 website bucket as `plot.png`
 - Generates an evolving data file and published it to your S3 website bucket as `data.csv` or `data.parquet`.
 - Lives in its own subdirectory with its own `Dockerfile` and `requirements.txt`
 
-### If Your API Requires a Key
+### If Your Data Source Requires a Key
 
 Never put API keys in a YAML file or Docker image. Store them as a Kubernetes Secret:
 
@@ -195,7 +197,7 @@ kubectl create secret generic my-api-secret \
   --from-literal=API_KEY=your_key_here
 ```
 
-Reference it in your CronJob spec:
+Then reference the secret value as an ENV variable in your CronJob spec:
 
 ```yaml
 env:
@@ -208,7 +210,7 @@ env:
     value: "your-bucket-name"     # plain env var — not a secret
 ```
 
-Your Python script reads it with `os.environ["API_KEY"]`. The key value never appears in any file on disk. Your EC2 IAM role already grants S3 and DynamoDB access, so no AWS credentials are needed anywhere.
+Your Python script reads the secret with `os.environ["API_KEY"]`. The key value never appears in any file on disk. Your EC2 IAM role already grants S3 and DynamoDB access, so no AWS credentials are needed anywhere.
 
 ### Data Source Ideas
 
@@ -226,7 +228,7 @@ Your Python script reads it with `os.environ["API_KEY"]`. The key value never ap
 
 Submit the following in the Canvas assignment:
 
-1. **Your Data Application Plot URL** — the public `http://` URL to your `plot.png` served from your S3 website bucket (e.g., `http://your-bucket-name.s3-website-us-east-1.amazonaws.com/plot.png`). The plot must show at least 72 hours of data. Paste the URL directly — if the image does not load it will not be graded.
+1. **Your Data Application Plot URL** — the public `http://` URL to your `plot.png` served from your S3 website bucket (e.g., `http://your-bucket-name.s3-website-us-east-1.amazonaws.com/plot.png`). The plot must represent at least 72 hours / 72 entries of data. Paste the URL directly — if the image does not load it will not be graded.
 
 2. **Your Data Application Repo URL** — the public GitHub URL to your pipeline code. The repository must include the Python script, a `Dockerfile`, and a `requirements.txt`.
 
@@ -241,6 +243,7 @@ Submit the following in the Canvas assignment:
 
 In addition to the above, submit a short written response (one paragraph each) to the following:
 
-- In the ISS sample application, data is persisted in DynamoDB. If this were a much higher-frequency application (hundreds of writes per minute), what changes would you make to the persistence strategy and why?
-- The ISS tracker detects orbital burns by comparing consecutive altitude readings. Describe at least one way this detection logic could produce a false positive, and how you would make it more robust.
-- What is the tradeoff between using DynamoDB (as in the ISS app) versus S3 Parquet (as in the `pipeline/` directory) for storing time-series data from a scheduled job? When would you choose one over the other?
+1. In the ISS sample application, data is persisted in DynamoDB. If this were a much higher-frequency application (hundreds of writes per minute), what changes would you make to the persistence strategy and why?
+2. The ISS tracker detects orbital burns by comparing consecutive altitude readings. Describe at least one way this detection logic could produce a false positive, and how you would make it more robust.
+3. How does each `CronJob` pod get AWS permissions without credentials being passed into the container?
+4. Notice the structure of the `iss-tracking` table in DynamoDB. What is the partition key and what is the sort key? Why do these work well in this example, but may not work for other solutions?
