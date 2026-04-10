@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nyt-pipeline
+spec:
+  schedule: "*/30 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: nyt-pipeline
+              image: ghcr.io/iveymistele/nyt-pipeline:latest
+              imagePullPolicy: Always
+              env:
+                - name: API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: nyt-api-secret
+                      key: API_KEY
+                - name: S3_BUCKET
+                  value: "zyh4up-dp2"
+          restartPolicy: OnFailure
