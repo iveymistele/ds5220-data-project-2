@@ -60,6 +60,11 @@ This allows the system to approximate:
 - plot.png — evolving time series plot
 - data.csv — full dataset
 
+The data.csv file contains the full historical dataset with the following fields:
+- section: NYT section name
+- timestamp: time of data collection (UTC)
+- article_count: number of newly observed articles in that run
+
 Both are uploaded to S3 and publicly accessible.
 
 ---
